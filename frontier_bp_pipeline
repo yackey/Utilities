@@ -1,0 +1,180 @@
+pipeline {
+
+    options {
+        timestamps()
+    }
+    
+    agent {
+        node {
+            label 'say-research'
+            }   // end of node
+    }    // end of agent  
+    
+    stages {
+
+            stage ('Checkout') {
+                steps {
+                    FormerCheckout()
+                    //bat "xcopy C:\\svn\\Frontier . /E /Y /EXCLUDE:c:\\svn\\excludes.txt"
+                    //stash name: 'checkout', excludes: '**/.svn/**' includes: '**'
+                }   // end of steps
+            }   // end of checkout stage  
+            
+            stage ('Parallel Build') {
+                failFast true
+                parallel {
+
+                    stage ('Release Build') {
+
+                        agent {
+                            node {
+                                label 'say-research'
+                                }   // end of node
+                        }    // end of agent
+
+                        steps {
+                            deleteDir()
+                            //unstash 'checkout'
+                            dir (".") {
+                                Build_x86_64_Release()
+                            }   // end of dir
+                            stash name: 'release_build_stash', excludes: '**/_CrossProduct/**, **/MSIInstallationProjects/**', includes: '**'
+                        }   // end of steps
+                        
+                        post {
+                            success {   // test in parallel also
+                                deleteDir()
+                                unstash 'release_build_stash'
+                                dir (".") {
+                                    GenerateTestResuts_x86_64_Release()
+                                }
+                            }
+                        }
+                        
+                    }   // end of Release Simulator Build stage
+                    
+                    stage ('Debug Build') {
+
+                        agent {
+                            node {
+                                label 'say-research'
+                                }   // end of node
+                        }    // end of agent
+
+                        steps {
+                            deleteDir()
+                            //unstash 'checkout'
+                            dir (".") {                           
+                                Build_x86_64_Debug()
+                            }   // end of dir
+                            stash name: 'debug_build_stash', excludes: '**/_CrossProduct/**, **/MSIInstallationProjects/**', includes: '**'
+                        }   // end of steps
+                        
+                        post {
+                            success {   // test in parallel also
+                                deleteDir()
+                                unstash 'debug_build_stash'
+                                dir (".") {
+                                    GenerateTestResuts_x86_64_Debug()
+                                }
+                                stash name: 'debug_test_stash', includes: '**'
+                            }
+                        }
+                    }   // end of Debug Simulator Build stage                    
+                    
+                }   //end of parallel
+                
+            }   // end of parallel build stage          
+            
+            stage("Publish Test results") {
+                agent {
+                    node {
+                        label 'say-research'
+                    }   // end of node
+                }    // end of agent
+                
+                steps {
+                    deleteDir()
+                    unstash 'debug_test_stash'
+                    dir (".") {
+                        PublishTestResuts_x86_64_Debug()
+                     }   // end of dir
+                }   // end of steps
+            }   // end of Publish Test results       
+            
+    }   // end of stages        
+    
+    post {
+        always {
+            bat "echo zzzzz"
+            deleteDir()
+        }
+    }    
+}   // end of pipeline
+
+def FormerCheckout() {
+    bat "echo former checkout"
+    deleteDir()
+}
+
+def Checkout() {
+    bat "xcopy C:\\svn\\Frontier . /E /Y /EXCLUDE:c:\\svn\\excludes.txt"
+}
+
+def Build_x86_64_Release() {
+    Checkout()
+    bat "c:\\yackey\\nuget\\nuget.exe restore Frontier.sln"
+    bat "\"${tool 'vs14'}\" Frontier.sln /p:Configuration=Release /t:rebuild /p:Platform=\"Mixed Platforms\" /p:ProductVersion=1.0.0.${env.BUILD_NUMBER}"
+}
+
+def Build_x86_64_Debug() {
+    Checkout()
+    bat "c:\\yackey\\nuget\\nuget.exe restore Frontier.sln"
+    bat "\"${tool 'vs14'}\" Frontier.sln /p:Configuration=Debug /t:rebuild /p:Platform=\"Mixed Platforms\" /p:ProductVersion=1.0.0.${env.BUILD_NUMBER}"
+}
+
+def GenerateTestResuts_x86_64_Debug() {
+    bat ".\\Unit-Component-Tests\\bin\\Debug\\Unit-Component-Tests.exe --gtest_output=xml:Unit-Component-Test-Results-Debug.xml"
+    bat "del /F managed-test-results-debug.xml"
+    bat "packages\\Nunit.ConsoleRunner.3.8.0\\tools\\nunit3-console.exe /result:managed-test-results-debug.xml FrontierConfigUnitTests\\bin\\Debug\\FrontierConfigUnitTests.dll"                      
+}
+
+def GenerateTestResuts_x86_64_Release() {
+    bat ".\\Unit-Component-Tests\\bin\\Release\\Unit-Component-Tests.exe --gtest_output=xml:Unit-Component-Test-Results-Release.xml"
+    bat "del /F managed-test-results-release.xml"
+    bat "packages\\Nunit.ConsoleRunner.3.8.0\\tools\\nunit3-console.exe /result:managed-test-results-release.xml FrontierConfigUnitTests\\bin\\Release\\FrontierConfigUnitTests.dll"                        
+}
+
+def PublishTestResuts_x86_64_Debug() {
+    //
+    step([$class: 'JUnitResultArchiver', allowEmptyResults: true, testResults: 'Unit-Component-Test-Results-Debug.xml'])
+    step([$class: 'JUnitResultArchiver', allowEmptyResults: true, testResults: 'managed-test-results-debug.xml'])
+    //
+    // unmanaged tests
+    bat 'OpenCppCoverage.exe .\\Unit-Component-Tests\\bin\\Debug\\Unit-Component-Tests.exe --config_file CodeCoverageConfigFile.txt'                        
+    //
+    // managed tests
+    bat 'opencover.console.exe "-target:packages\\NUnit.ConsoleRunner.3.8.0\\tools\\nunit3-console.exe" "-targetargs:/result:managed-test-results-debug.xml FrontierConfigUnitTests\\bin\\Debug\\FrontierConfigUnitTests.dll" -register:user -output:managed-debug-opencover.xml -hideskipped:Filter'
+    //
+    bat 'OpenCoverToCoberturaConverter.exe "-input:managed-debug-opencover.xml" "-output:CodeCoverage\\CoverageReports\\ManagedCoverageReport.xml" "-sources:FrontierConfig"'
+    //
+    bat 'ReportGenerator.exe "-reports:CodeCoverage\\CoverageReports\\*.xml" "-targetDir:CodeCoverage\\CoverageReportPublished" "-assemblyfilters:-nunit.*"'
+    //
+    publishHTML([allowMissing: false, 
+        alwaysLinkToLastBuild: false, 
+        keepAll: true, 
+        reportDir: 'CodeCoverage\\CoverageReportPublished', 
+        reportFiles: 'index.html', 
+        reportName: 'Code Coverage', 
+        reportTitles: ''])   
+    
+    //step([$class: 'CoberturaPublisher', autoUpdateHealth: false, autoUpdateStability: false, coberturaReportFile: 'CodeCoverage\\CoverageReports\\*.xml', conditionalCoverageTargets: '70, //0, 0', failUnhealthy: false, failUnstable: false, lineCoverageTargets: '80, 0, 0', maxNumberOfBuilds: 0, methodCoverageTargets: '80, 0, 0', onlyStable: false, sourceEncoding: 'ASCII', zoomCoverageChart: false])
+
+    //step([$class: 'NunitPublisher', testResultsPattern: 'managed-test-results-debug.xml', debug: false, keepJunitReports: true, skipJunitArchiver: false, failIfNoResults: false])
+    //nunit testResultsPattern: 'managed-test-results-debug.xml'
+    
+
+    
+}
+
+
