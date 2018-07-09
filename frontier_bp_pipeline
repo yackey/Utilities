@@ -158,20 +158,20 @@ def PublishTestResuts_x86_64_Debug() {
     //
     bat 'OpenCoverToCoberturaConverter.exe "-input:managed-debug-opencover.xml" "-output:CodeCoverage\\CoverageReports\\ManagedCoverageReport.xml" "-sources:FrontierConfig"'
     //
-    bat 'ReportGenerator.exe "-reports:CodeCoverage\\CoverageReports\\*.xml" "-targetDir:CodeCoverage\\CoverageReportPublished" "-assemblyfilters:-nunit.*"'
+    bat 'ReportGenerator.exe "-reports:CodeCoverage\\CoverageReports\\*.xml" "-targetDir:CodeCoverage\\CoverageReportPublished" "-assemblyfilters:-nunit.*"' "-historydir:CodeCoverage\\CoverageReportHistory"
     //
     publishHTML([allowMissing: false, 
         alwaysLinkToLastBuild: false, 
         keepAll: true, 
         reportDir: 'CodeCoverage\\CoverageReportPublished', 
-        reportFiles: 'index.html', 
+        reportFiles: 'index.htm', 
         reportName: 'Code Coverage', 
         reportTitles: ''])   
     
     //step([$class: 'CoberturaPublisher', autoUpdateHealth: false, autoUpdateStability: false, coberturaReportFile: 'CodeCoverage\\CoverageReports\\*.xml', conditionalCoverageTargets: '70, //0, 0', failUnhealthy: false, failUnstable: false, lineCoverageTargets: '80, 0, 0', maxNumberOfBuilds: 0, methodCoverageTargets: '80, 0, 0', onlyStable: false, sourceEncoding: 'ASCII', zoomCoverageChart: false])
 
     //step([$class: 'NunitPublisher', testResultsPattern: 'managed-test-results-debug.xml', debug: false, keepJunitReports: true, skipJunitArchiver: false, failIfNoResults: false])
-    //nunit testResultsPattern: 'managed-test-results-debug.xml'
+    nunit testResultsPattern: 'managed-test-results-debug.xml'
     
 
     
